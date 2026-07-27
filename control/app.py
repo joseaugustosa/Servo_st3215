@@ -212,8 +212,8 @@ class ArmGUI:
 
         tip = ttk.Label(
             parent,
-            text="ESP32 em AP: liga-te a ESP32_DEV e usa http://192.168.4.1\n"
-            "O endpoint POST /api/arm ainda precisa de ser adicionado no firmware.",
+            text="ESP32 em AP: Wi‑Fi ESP32_DEV → http://192.168.4.1/arm\n"
+            "(página 3D com arrastar da garra). API: POST /api/arm",
             wraplength=340,
             foreground="#555",
         )

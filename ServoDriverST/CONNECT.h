@@ -3,10 +3,13 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include "WEBPAGE.h"
+#include "ARM_PAGE.h"
 
 
 // Create AsyncWebServer object on port 80
 WebServer server(80);
+
+#include "ARM_CTRL.h"
 
 
 // select the ID of active servo.
@@ -149,6 +152,10 @@ void handleRoot() {
  server.send(200, "text/html", index_html); //Send web page
 }
 
+void handleArmPage() {
+  server.send_P(200, "text/html", arm_html);
+}
+
 
 void handleID() {
   if(!searchedStatus && searchFinished){
@@ -209,6 +216,8 @@ void handleSTS() {
 
 void webCtrlServer(){
     server.on("/", handleRoot);
+    server.on("/arm", handleArmPage);
+    server.on("/api/arm", HTTP_ANY, handleArmApi);
     server.on("/readID", handleID);
     server.on("/readSTS", handleSTS);
 
@@ -228,6 +237,7 @@ void webCtrlServer(){
   // Start server
   server.begin();
   Serial.println("Server Starts.");
+  Serial.println("Arm 3D UI: http://<IP>/arm");
 }
 
 

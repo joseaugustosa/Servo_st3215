@@ -38,8 +38,17 @@ Edita `config.yaml`:
 
 - **simulation** — só visualização
 - **serial** — cabo USB; linha `ARM id,pos,spd,acc;...`
-- **wifi** — `POST /api/arm` no ESP32
+- **wifi** — `POST /api/arm` no ESP32 (`s=id,pos,spd,acc;...`)
 - **both** — envia para Serial e Wi‑Fi ao mesmo tempo
+
+### UI web no ESP32 (AP)
+
+Após gravar `ServoDriverST`:
+1. Liga ao Wi‑Fi `ESP32_DEV`
+2. Abre http://192.168.4.1/arm
+3. Arrasta a garra no gráfico 3D (Canvas, sem internet)
+
+Pré-visualização local: `control/assets/arm_web_preview.html`
 
 Conversão de ângulo → posição ST3215 (0–4095, centro 2047) em `arm_model.py`.
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import List, Optional
-import json
 from pathlib import Path
 
 import yaml
@@ -75,20 +74,16 @@ class WifiBackend(CommBackend):
     def send_positions(self, commands: List[dict]) -> None:
         if not self._connected:
             raise ConnectionError("Wi‑Fi não ligado")
+        import urllib.parse
         import urllib.request
 
-        payload = json.dumps(
-            {
-                "servos": [
-                    {"id": c["id"], "pos": c["pos"], "speed": c["speed"], "acc": c["acc"]}
-                    for c in commands
-                ]
-            }
-        ).encode("utf-8")
+        # Formato nativo do firmware ESP32: s=id,pos,spd,acc;...
+        parts = [f"{c['id']},{c['pos']},{c['speed']},{c['acc']}" for c in commands]
+        body = urllib.parse.urlencode({"s": ";".join(parts)}).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + "/api/arm",
-            data=payload,
-            headers={"Content-Type": "application/json"},
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
         urllib.request.urlopen(req, timeout=2)

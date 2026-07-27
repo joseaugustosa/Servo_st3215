@@ -66,6 +66,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 <body>
     <h3>SERVO DRIVER with ESP32</h3>
     <p>
+    <a href="/arm" style="color:#8ab4f8;font-size:1.2rem;">Abrir controlo 3D do braço (a1–a4 + garra)</a>
+    <p>
     <span id="IDValue">Click this button to start searching servos.</span>
     <p>
     <label align="center"><button class="button" onclick="toggleCheckbox(9, 0, 0, 0);">Start Searching</button></label>

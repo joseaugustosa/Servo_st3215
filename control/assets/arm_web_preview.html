@@ -1,0 +1,344 @@
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#0e1116"/>
+<title>Braço ST3215 3D</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;height:100dvh;background:#0e1116;color:#e8eaed;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;overflow:hidden;touch-action:none;overscroll-behavior:none;position:fixed;inset:0}
+#c{display:block;width:100%;height:100%;touch-action:none;cursor:grab;position:absolute;inset:0}
+#c.drag{cursor:grabbing}
+#ui{
+  position:absolute;z-index:5;left:10px;right:10px;bottom:0;
+  padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));
+  background:rgba(18,22,30,.92);border-radius:14px 14px 0 0;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  max-height:48vh;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y
+}
+@media(min-width:800px){
+  #ui{left:12px;right:auto;top:12px;bottom:auto;width:300px;max-height:none;border-radius:12px;padding:14px}
+}
+#ui h1{font-size:16px;font-weight:600;margin-bottom:4px;color:#8ab4f8}
+#ui .hint{font-size:12px;color:#9aa0a6;line-height:1.35;margin-bottom:8px}
+#status{font-size:12px;color:#9aa0a6;margin:6px 0}
+label{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;margin:8px 0;min-height:36px}
+input[type=range]{flex:1;min-width:0;height:32px;accent-color:#1a73e8}
+.modes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0}
+.modes button,.row button{
+  background:#3c4043;color:#fff;border:0;border-radius:10px;
+  padding:12px 8px;font-size:14px;font-weight:600;min-height:44px;cursor:pointer
+}
+.modes button.on{background:#1a73e8}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:8px}
+.row button.pri{background:#1a73e8}
+a{color:#8ab4f8;font-size:13px;display:inline-block;padding:8px 0}
+.ok{color:#81c995}.bad{color:#f28b82}
+#toast{position:absolute;top:calc(10px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.55);padding:6px 12px;border-radius:20px;font-size:12px;z-index:6;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="toast">Modo: Mover garra</div>
+<div id="ui">
+  <h1>Braço a1–a4 + garra</h1>
+  <p class="hint">Telemóvel: toca <b style="color:#f28b82">Mover</b> e arrasta a garra. <b>Vista</b> = rodar câmara. <b>Altura</b> = Z.</p>
+  <div class="modes">
+    <button type="button" id="mMove" class="on" onclick="setMode('move')">Mover</button>
+    <button type="button" id="mView" onclick="setMode('view')">Vista</button>
+    <button type="button" id="mZ" onclick="setMode('z')">Altura</button>
+  </div>
+  <label>Pitch <span id="pv">0°</span><input id="pitch" type="range" min="-90" max="90" value="0"/></label>
+  <label>Garra <span id="gv">0°</span><input id="grip" type="range" min="0" max="90" value="0"/></label>
+  <label>Só simular<input id="sim" type="checkbox" style="width:22px;height:22px"/></label>
+  <div class="row">
+    <button type="button" class="pri" onclick="home()">Home</button>
+    <button type="button" onclick="nudgeZ(15)">Z+</button>
+    <button type="button" onclick="nudgeZ(-15)">Z−</button>
+    <button type="button" onclick="sendNow()">Enviar</button>
+  </div>
+  <p id="status">A ligar…</p>
+  <a href="/">← Driver servos</a>
+</div>
+<script>
+const L={L1:50,L2:120,L3:100,L4:60};
+const IDS=[1,2,3,4,5];
+const CTR=2047, CPD=4096/360, SPD=1500, ACC=50;
+let joints={a1:0,a2:45*Math.PI/180,a3:-60*Math.PI/180,a4:15*Math.PI/180,g:0};
+let toolPitch=0, elbowUp=true;
+let cam={yaw:0.8,pitch:0.45,dist:480};
+let mode='move';
+let dragging=false, orbiting=false, zDragging=false;
+let lastX=0,lastY=0,pinchDist0=0,camDist0=480;
+let activePointers=new Map();
+let pending=false, sending=false, lastSend=0;
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+const statusEl=document.getElementById('status');
+const simEl=document.getElementById('sim');
+const toast=document.getElementById('toast');
+const HIT=42;
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function deg(r){return r*180/Math.PI;}
+function rad(d){return d*Math.PI/180;}
+function setMode(m){
+  mode=m;
+  document.getElementById('mMove').className=m==='move'?'on':'';
+  document.getElementById('mView').className=m==='view'?'on':'';
+  document.getElementById('mZ').className=m==='z'?'on':'';
+  toast.textContent='Modo: '+(m==='move'?'Mover garra':m==='view'?'Rodar vista':'Altura Z');
+}
+
+function fk(q){
+  const a2=q.a2,a3=q.a2+q.a3,a4=q.a2+q.a3+q.a4;
+  const r=L.L2*Math.cos(a2)+L.L3*Math.cos(a3)+L.L4*Math.cos(a4);
+  const z=L.L1+L.L2*Math.sin(a2)+L.L3*Math.sin(a3)+L.L4*Math.sin(a4);
+  return {x:r*Math.cos(q.a1),y:r*Math.sin(q.a1),z,pitch:a4};
+}
+function links(q){
+  const a2=q.a2,a3=q.a2+q.a3,a4=q.a2+q.a3+q.a4;
+  const pol=(r,z)=>({x:r*Math.cos(q.a1),y:r*Math.sin(q.a1),z});
+  const p0={x:0,y:0,z:0}, p1={x:0,y:0,z:L.L1};
+  const r2=L.L2*Math.cos(a2), z2=L.L1+L.L2*Math.sin(a2);
+  const p2=pol(r2,z2);
+  const r3=r2+L.L3*Math.cos(a3), z3=z2+L.L3*Math.sin(a3);
+  const p3=pol(r3,z3);
+  const r4=r3+L.L4*Math.cos(a4), z4=z3+L.L4*Math.sin(a4);
+  return [p0,p1,p2,p3,pol(r4,z4)];
+}
+function ik(x,y,z,tp){
+  const a1=Math.atan2(y,x);
+  const r=Math.hypot(x,y);
+  const rw=r-L.L4*Math.cos(tp);
+  const zw=z-L.L4*Math.sin(tp)-L.L1;
+  const d=Math.hypot(rw,zw);
+  const maxR=L.L2+L.L3, minR=Math.abs(L.L2-L.L3);
+  if(d>maxR+1e-3||d<minR-1e-3) return null;
+  let cosq3=(L.L2*L.L2+L.L3*L.L3-d*d)/(2*L.L2*L.L3);
+  cosq3=clamp(cosq3,-1,1);
+  const q3abs=Math.acos(cosq3);
+  const a3=elbowUp?-(Math.PI-q3abs):(Math.PI-q3abs);
+  const alpha=Math.atan2(zw,rw);
+  let cosb=(L.L2*L.L2+d*d-L.L3*L.L3)/(2*L.L2*d);
+  cosb=clamp(cosb,-1,1);
+  const beta=Math.acos(cosb);
+  const a2=elbowUp?alpha+beta:alpha-beta;
+  return {a1,a2,a3,a4:tp-a2-a3,g:joints.g};
+}
+function ang2pos(angDeg){return clamp(Math.round(CTR+angDeg*CPD),0,4095);}
+function cmdList(q){
+  return [[IDS[0],ang2pos(deg(q.a1))],[IDS[1],ang2pos(deg(q.a2))],[IDS[2],ang2pos(deg(q.a3))],[IDS[3],ang2pos(deg(q.a4))],[IDS[4],ang2pos(deg(q.g))]];
+}
+function encode(list){return list.map(p=>p[0]+','+p[1]+','+SPD+','+ACC).join(';');}
+async function sendNow(){
+  if(simEl.checked){statusEl.innerHTML='<span class="ok">Simulação</span>';return;}
+  if(sending){pending=true;return;}
+  sending=true;
+  try{
+    const r=await fetch('/api/arm',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'s='+encode(cmdList(joints))});
+    statusEl.innerHTML=r.ok?'<span class="ok">Enviado</span>':'<span class="bad">Erro HTTP '+r.status+'</span>';
+  }catch(e){statusEl.innerHTML='<span class="bad">Falha de rede</span>';}
+  sending=false;
+  if(pending){pending=false;sendNow();}
+}
+function scheduleSend(){
+  const t=performance.now();
+  if(t-lastSend>90){lastSend=t;sendNow();}
+  else{pending=true;setTimeout(()=>{if(pending){pending=false;lastSend=performance.now();sendNow();}},100);}
+}
+
+function viewSize(){
+  const vv=window.visualViewport;
+  return {w:vv?vv.width:innerWidth, h:vv?vv.height:innerHeight};
+}
+function resize(){
+  const d=Math.min(window.devicePixelRatio||1,2);
+  const {w,h}=viewSize();
+  canvas.width=w*d; canvas.height=h*d;
+  canvas.style.width=w+'px'; canvas.style.height=h+'px';
+  ctx.setTransform(d,0,0,d,0,0);
+}
+function project(p){
+  const {w,h}=viewSize();
+  const cy=Math.cos(cam.yaw),sy=Math.sin(cam.yaw);
+  const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch);
+  let x1=p.x*cy+p.y*sy, z1=-p.x*sy+p.y*cy, y1=p.z;
+  let y2=y1*cp-z1*sp, z2=y1*sp+z1*cp+cam.dist;
+  const s=600/Math.max(60,z2);
+  return {x:w/2+x1*s, y:h/2-y2*s, s, z:z2};
+}
+function draw(){
+  const {w,h}=viewSize();
+  ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle='#1f2937'; ctx.lineWidth=1;
+  for(let i=-300;i<=300;i+=50){
+    const a=project({x:i,y:-300,z:0}), b=project({x:i,y:300,z:0});
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    const c=project({x:-300,y:i,z:0}), d=project({x:300,y:i,z:0});
+    ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.lineTo(d.x,d.y);ctx.stroke();
+  }
+  const pts=links(joints).map(project);
+  ctx.lineWidth=7; ctx.strokeStyle='#1a73e8'; ctx.lineJoin='round';
+  ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y)); ctx.stroke();
+  const cols=['#9aa0a6','#8ab4f8','#8ab4f8','#8ab4f8','#f28b82'];
+  pts.forEach((p,i)=>{
+    ctx.beginPath(); ctx.fillStyle=cols[i];
+    ctx.arc(p.x,p.y,i===4?18:8,0,Math.PI*2); ctx.fill();
+    if(i===4){ctx.beginPath();ctx.strokeStyle='rgba(242,139,130,.45)';ctx.lineWidth=2;ctx.arc(p.x,p.y,HIT*0.55,0,Math.PI*2);ctx.stroke();}
+  });
+  const gOpen=18*(1-joints.g/(Math.PI/2));
+  const tip=links(joints)[4];
+  const left=project({x:tip.x-Math.sin(joints.a1)*gOpen,y:tip.y+Math.cos(joints.a1)*gOpen,z:tip.z});
+  const right=project({x:tip.x+Math.sin(joints.a1)*gOpen,y:tip.y-Math.cos(joints.a1)*gOpen,z:tip.z});
+  ctx.strokeStyle='#f28b82'; ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(left.x,left.y);ctx.lineTo(right.x,right.y);ctx.stroke();
+  requestAnimationFrame(draw);
+}
+
+function screenToWorldXY(sx,sy,zPlane){
+  let best=null,bestD=1e9;
+  for(let x=-350;x<=350;x+=10){
+    for(let y=-350;y<=350;y+=10){
+      const p=project({x,y,z:zPlane});
+      const d=(p.x-sx)*(p.x-sx)+(p.y-sy)*(p.y-sy);
+      if(d<bestD){bestD=d;best={x,y};}
+    }
+  }
+  let bx=best.x,by=best.y;
+  for(let step=5;step>=0.5;step*=0.5){
+    for(let dx=-2;dx<=2;dx++) for(let dy=-2;dy<=2;dy++){
+      const x=bx+dx*step,y=by+dy*step;
+      const p=project({x,y,z:zPlane});
+      const d=(p.x-sx)*(p.x-sx)+(p.y-sy)*(p.y-sy);
+      if(d<bestD){bestD=d;best={x,y};}
+    }
+    bx=best.x;by=best.y;
+  }
+  return best;
+}
+function hitGripper(sx,sy){
+  const g=project(links(joints)[4]);
+  return Math.hypot(g.x-sx,g.y-sy)<HIT;
+}
+function tryMove(x,y,z){
+  const r=ik(x,y,z,toolPitch);
+  if(!r){statusEl.innerHTML='<span class="bad">Fora de alcance</span>';return false;}
+  joints=r; scheduleSend(); return true;
+}
+function nudgeZ(dz){
+  const tip=fk(joints);
+  tryMove(tip.x,tip.y,clamp(tip.z+dz,10,L.L1+L.L2+L.L3+L.L4));
+}
+function localXY(e){
+  const rect=canvas.getBoundingClientRect();
+  return {x:e.clientX-rect.left,y:e.clientY-rect.top};
+}
+function pinchSep(){
+  if(activePointers.size<2) return 0;
+  const pts=[...activePointers.values()];
+  return Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+}
+
+canvas.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  lastX=e.clientX; lastY=e.clientY;
+  try{canvas.setPointerCapture(e.pointerId);}catch(_){}
+  if(activePointers.size===2){
+    dragging=false; orbiting=true; zDragging=false;
+    pinchDist0=pinchSep(); camDist0=cam.dist;
+    return;
+  }
+  const p=localXY(e);
+  if(mode==='view'||e.button===2){orbiting=true;return;}
+  if(mode==='z'){zDragging=true;return;}
+  // mode move
+  if(hitGripper(p.x,p.y)||e.pointerType==='touch'){
+    dragging=true; canvas.classList.add('drag');
+  } else {
+    orbiting=true;
+  }
+});
+canvas.addEventListener('pointermove',e=>{
+  e.preventDefault();
+  if(!activePointers.has(e.pointerId)) return;
+  activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  const dx=e.clientX-lastX, dy=e.clientY-lastY;
+  lastX=e.clientX; lastY=e.clientY;
+
+  if(activePointers.size>=2){
+    const sep=pinchSep();
+    if(pinchDist0>0) cam.dist=clamp(camDist0*(pinchDist0/sep),220,900);
+    // orbit médio
+    cam.yaw-=dx*0.008; cam.pitch=clamp(cam.pitch+dy*0.008,-1.2,1.4);
+    return;
+  }
+  if(orbiting){
+    cam.yaw-=dx*0.012; cam.pitch=clamp(cam.pitch+dy*0.012,-1.2,1.4); return;
+  }
+  if(zDragging){
+    const tip=fk(joints);
+    tryMove(tip.x,tip.y,clamp(tip.z-dy*0.45,10,L.L1+L.L2+L.L3+L.L4)); return;
+  }
+  if(dragging){
+    const p=localXY(e); const tip=fk(joints);
+    const w=screenToWorldXY(p.x,p.y,tip.z);
+    if(w) tryMove(w.x,w.y,tip.z);
+  }
+});
+function endPtr(e){
+  activePointers.delete(e.pointerId);
+  if(activePointers.size===0){dragging=false;orbiting=false;zDragging=false;canvas.classList.remove('drag');}
+  else if(activePointers.size===1){pinchDist0=0;}
+}
+canvas.addEventListener('pointerup',endPtr);
+canvas.addEventListener('pointercancel',endPtr);
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const tip=fk(joints);
+  tryMove(tip.x,tip.y,clamp(tip.z-e.deltaY*0.08,10,L.L1+L.L2+L.L3+L.L4));
+},{passive:false});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('gesturestart',e=>e.preventDefault());
+
+document.getElementById('pitch').oninput=e=>{
+  toolPitch=rad(+e.target.value);
+  document.getElementById('pv').textContent=e.target.value+'°';
+  const tip=fk(joints); tryMove(tip.x,tip.y,tip.z);
+};
+document.getElementById('grip').oninput=e=>{
+  joints.g=rad(+e.target.value);
+  document.getElementById('gv').textContent=e.target.value+'°';
+  scheduleSend();
+};
+function home(){
+  joints={a1:0,a2:rad(45),a3:rad(-60),a4:rad(15),g:joints.g};
+  const p=fk(joints); toolPitch=p.pitch;
+  document.getElementById('pitch').value=Math.round(deg(toolPitch));
+  document.getElementById('pv').textContent=Math.round(deg(toolPitch))+'°';
+  scheduleSend();
+}
+async function boot(){
+  resize(); setMode('move');
+  try{
+    const r=await fetch('/api/arm');
+    if(r.ok){
+      const j=await r.json();
+      if(j.L1){L.L1=j.L1;L.L2=j.L2;L.L3=j.L3;L.L4=j.L4;}
+      statusEl.innerHTML='<span class="ok">AP OK — usa Mover / Vista / Altura</span>';
+    }
+  }catch(e){simEl.checked=true;statusEl.textContent='Sem ESP32 — simulação local';}
+  home(); draw();
+}
+addEventListener('resize',resize);
+if(window.visualViewport) visualViewport.addEventListener('resize',resize);
+boot();
+</script>
+</body>
+</html>
