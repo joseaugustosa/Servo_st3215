@@ -1,0 +1,56 @@
+# Configuração do braço ST3215 — a1..a4 + garra
+# Todos estes valores são editáveis na GUI (separador "Parâmetros").
+
+arm:
+  # Comprimentos dos elos (mm) — editáveis
+  L1: 50.0   # base → ombro (altura)
+  L2: 120.0  # a2: ombro → cotovelo
+  L3: 100.0  # a3: cotovelo → pulso
+  L4: 60.0   # a4: pulso → centro da garra
+
+  # Limites articulares (graus)
+  joint_limits_deg:
+    a1:      [-150, 150]   # base
+    a2:      [-90, 90]     # ombro
+    a3:      [-140, 140]   # cotovelo
+    a4:      [-120, 120]   # pulso
+    gripper: [0, 90]       # garra: 0=aberta, 90=fechada
+
+  # IDs no bus ST3215 (a1..a4 + garra)
+  servo_ids:
+    a1: 1
+    a2: 2
+    a3: 3
+    a4: 4
+    gripper: 5
+
+  servo_center: 2047
+  counts_per_deg: 11.375   # 4096/360
+
+  joint_sign:
+    a1: 1
+    a2: 1
+    a3: 1
+    a4: 1
+    gripper: 1
+
+  joint_offset_deg:
+    a1: 0.0
+    a2: 0.0
+    a3: 0.0
+    a4: 0.0
+    gripper: 0.0
+
+  default_speed: 1500
+  default_acc: 50
+
+connection:
+  # Podes usar serial e/ou wifi em simultâneo (GUI).
+  # mode: "simulation" | "serial" | "wifi" | "both"
+  mode: simulation
+  wifi_url: "http://192.168.4.1"
+  serial_port: "COM3"
+  serial_baud: 115200
+
+gui:
+  workspace_mm: 350
